@@ -25,7 +25,6 @@ type Reader interface {
 
 // Unmarshal decodes the payload from the binary format.
 func Unmarshal(b []byte, v interface{}) (err error) {
-
 	// Get the decoder from the pool, reset it
 	d := decoders.Get().(*Decoder)
 	d.r.(*reader).Reset(b) // Reset the reader
@@ -38,22 +37,12 @@ func Unmarshal(b []byte, v interface{}) (err error) {
 
 // Decoder represents a binary decoder.
 type Decoder struct {
-	r       Reader
-	s       *reader // Not using the interface for better inlining
-	scratch [10]byte
+	r Reader
 }
 
 // NewDecoder creates a binary decoder.
 func NewDecoder(r Reader) *Decoder {
-	var slicer *reader
-	if s, ok := r.(*reader); ok {
-		slicer = s
-	}
-
-	return &Decoder{
-		r: r,
-		s: slicer,
-	}
+	return &Decoder{r: r}
 }
 
 // Decode decodes a value by reading from the underlying io.Reader.
@@ -87,42 +76,11 @@ func (d *Decoder) ReadVarint() (int64, error) {
 	return binary.ReadVarint(d.r)
 }
 
-// ReadUint16 reads a uint16
-func (d *Decoder) ReadUint16() (out uint16, err error) {
-	var b []byte
-	if b, err = d.sliceOrScratch(2); err == nil {
-		_ = b[1] // bounds check hint to compiler
-		out = (uint16(b[0]) | uint16(b[1])<<8)
-	}
-	return
-}
-
-// ReadUint32 reads a uint32
-func (d *Decoder) ReadUint32() (out uint32, err error) {
-	var b []byte
-	if b, err = d.sliceOrScratch(4); err == nil {
-		_ = b[3] // bounds check hint to compiler
-		out = (uint32(b[0]) | uint32(b[1])<<8 | uint32(b[2])<<16 | uint32(b[3])<<24)
-	}
-	return
-}
-
-// ReadUint64 reads a uint64
-func (d *Decoder) ReadUint64() (out uint64, err error) {
-	var b []byte
-	if b, err = d.sliceOrScratch(8); err == nil {
-		_ = b[7] // bounds check hint to compiler
-		out = (uint64(b[0]) | uint64(b[1])<<8 | uint64(b[2])<<16 | uint64(b[3])<<24 |
-			uint64(b[4])<<32 | uint64(b[5])<<40 | uint64(b[6])<<48 | uint64(b[7])<<56)
-	}
-	return
-}
-
 // ReadFloat32 reads a float32
 func (d *Decoder) ReadFloat32() (out float32, err error) {
-	var v uint32
-	if v, err = d.ReadUint32(); err == nil {
-		out = math.Float32frombits(v)
+	var v uint64
+	if v, err = d.ReadUvarint(); err == nil {
+		math.Float32frombits(uint32(v))
 	}
 	return
 }
@@ -130,7 +88,7 @@ func (d *Decoder) ReadFloat32() (out float32, err error) {
 // ReadFloat64 reads a float64
 func (d *Decoder) ReadFloat64() (out float64, err error) {
 	var v uint64
-	if v, err = d.ReadUint64(); err == nil {
+	if v, err = d.ReadUvarint(); err == nil {
 		out = math.Float64frombits(v)
 	}
 	return
@@ -152,34 +110,4 @@ func (d *Decoder) readComplex64() (out complex64, err error) {
 func (d *Decoder) readComplex128() (out complex128, err error) {
 	err = binary.Read(d.r, binary.LittleEndian, &out)
 	return
-}
-
-// sliceOrScratch a slice or reads into as scratch buffer. This is useful for values
-// which will get reallocated after this, such as ints, floats, etc.
-func (d *Decoder) sliceOrScratch(n int) (buffer []byte, err error) {
-	if d.s != nil {
-		return d.s.Slice(n)
-	}
-
-	buffer = d.scratch[:n]
-	_, err = d.r.Read(buffer)
-	return
-}
-
-// Slice selects a sub-slice of next bytes. This is similar to Read() but does not
-// actually perform a copy, but simply uses the underlying slice (if available) and
-// returns a sub-slice pointing to the same array. Since this requires access
-// to the underlying data, this is only available for our default reader.
-func (d *Decoder) Slice(n int) ([]byte, error) {
-	if d.s != nil {
-		return d.s.Slice(n)
-	}
-
-	// If we don't have a slicer, we can just allocate and read
-	buffer := make([]byte, n, n)
-	if _, err := d.Read(buffer); err != nil {
-		return nil, err
-	}
-
-	return buffer, nil
 }

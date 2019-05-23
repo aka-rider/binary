@@ -353,25 +353,14 @@ func (c *reflectMapCodec) DecodeTo(d *Decoder, rv reflect.Value) (err error) {
 // Write key writes a key to the encoder
 func (c *reflectMapCodec) writeKey(e *Encoder, key reflect.Value) (err error) {
 	switch key.Kind() {
-
-	case reflect.Int16:
-		e.WriteUint16(uint16(key.Int()))
-	case reflect.Int32:
-		e.WriteUint32(uint32(key.Int()))
-	case reflect.Int64:
-		e.WriteUint64(uint64(key.Int()))
-
-	case reflect.Uint16:
-		e.WriteUint16(uint16(key.Uint()))
-	case reflect.Uint32:
-		e.WriteUint32(uint32(key.Uint()))
-	case reflect.Uint64:
-		e.WriteUint64(uint64(key.Uint()))
-
+	case reflect.Int16, reflect.Int32, reflect.Int64:
+		e.WriteVarint(key.Int())
+	case reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		e.WriteUvarint(key.Uint())
 	case reflect.String:
 		str := key.String()
-		e.WriteUint16(uint16(len(str)))
-		e.Write(stringToBinary(str))
+		e.WriteUvarint(uint64(len(str)))
+		e.Write([]byte(str))
 	default:
 		err = c.key.EncodeTo(e, key)
 	}
@@ -381,47 +370,45 @@ func (c *reflectMapCodec) writeKey(e *Encoder, key reflect.Value) (err error) {
 // Read key reads a key from the decoder
 func (c *reflectMapCodec) readKey(d *Decoder, keyType reflect.Type) (key reflect.Value, err error) {
 	switch keyType.Kind() {
-
 	case reflect.Int16:
-		var v uint16
-		if v, err = d.ReadUint16(); err == nil {
+		var v int64
+		if v, err = d.ReadVarint(); err == nil {
 			key = reflect.ValueOf(int16(v))
 		}
 	case reflect.Int32:
-		var v uint32
-		if v, err = d.ReadUint32(); err == nil {
+		var v int64
+		if v, err = d.ReadVarint(); err == nil {
 			key = reflect.ValueOf(int32(v))
 		}
 	case reflect.Int64:
-		var v uint64
-		if v, err = d.ReadUint64(); err == nil {
-			key = reflect.ValueOf(int64(v))
+		var v int64
+		if v, err = d.ReadVarint(); err == nil {
+			key = reflect.ValueOf(v)
 		}
 
 	case reflect.Uint16:
-		var v uint16
-		if v, err = d.ReadUint16(); err == nil {
-			key = reflect.ValueOf(v)
+		var v uint64
+		if v, err = d.ReadUvarint(); err == nil {
+			key = reflect.ValueOf(uint16(v))
 		}
 	case reflect.Uint32:
-		var v uint32
-		if v, err = d.ReadUint32(); err == nil {
-			key = reflect.ValueOf(v)
+		var v uint64
+		if v, err = d.ReadUvarint(); err == nil {
+			key = reflect.ValueOf(uint32(v))
 		}
 	case reflect.Uint64:
 		var v uint64
-		if v, err = d.ReadUint64(); err == nil {
+		if v, err = d.ReadUvarint(); err == nil {
 			key = reflect.ValueOf(v)
 		}
 
 	// String keys must have max length of 65536
 	case reflect.String:
-		var l uint16
-		var b []byte
-
-		if l, err = d.ReadUint16(); err == nil {
-			if b, err = d.Slice(int(l)); err == nil {
-				key = reflect.ValueOf(string(b))
+		var l uint64
+		if l, err = d.ReadUvarint(); err == nil {
+			buf := make([]byte, l)
+			if _, err = d.Read(buf); err == nil {
+				key = reflect.ValueOf(string(buf))
 			}
 		}
 
@@ -441,18 +428,17 @@ type stringCodec struct{}
 func (c *stringCodec) EncodeTo(e *Encoder, rv reflect.Value) error {
 	str := rv.String()
 	e.WriteUvarint(uint64(len(str)))
-	e.Write(stringToBinary(str))
+	e.Write([]byte(str))
 	return nil
 }
 
 // Decode decodes into a reflect value from the decoder.
 func (c *stringCodec) DecodeTo(d *Decoder, rv reflect.Value) (err error) {
 	var l uint64
-	var b []byte
-
 	if l, err = d.ReadUvarint(); err == nil {
-		if b, err = d.Slice(int(l)); err == nil {
-			rv.SetString(string(b))
+		buf := make([]byte, l)
+		if _, err = d.Read(buf); err == nil {
+			rv.SetString(string(buf))
 		}
 	}
 	return
